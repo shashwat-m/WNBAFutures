@@ -129,115 +129,9 @@ vif(ortg_model)
 vif(drtg_model)
 ```
 
-## Step 6: Evaluate on Test Set
+## Step 5b: Trimmed Models (Significant Predictors Only)
 
-```{r evaluation}
-test_set$pred_ortg <- predict(ortg_model, newdata = test_set)
-test_set$pred_drtg <- predict(drtg_model, newdata = test_set)
-
-cat("ORTG Train MSE:", round(mean(ortg_model$residuals^2),                           4), "\n")
-cat("ORTG Test MSE: ", round(mean((test_set$OnOffRtg - test_set$pred_ortg)^2, na.rm=TRUE), 4), "\n")
-cat("DRTG Train MSE:", round(mean(drtg_model$residuals^2),                           4), "\n")
-cat("DRTG Test MSE: ", round(mean((test_set$OnDefRtg - test_set$pred_drtg)^2, na.rm=TRUE), 4), "\n")
-
-ggplot(test_set, aes(x = OnOffRtg, y = pred_ortg)) +
-  geom_point(alpha = 0.5, color = "#e05c3a") +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
-  labs(title = "ORTG: Predicted vs Actual (Test Set)",
-       x = "Actual ORTG", y = "Predicted ORTG") +
-  theme_minimal()
-
-ggplot(test_set, aes(x = OnDefRtg, y = pred_drtg)) +
-  geom_point(alpha = 0.5, color = "#3a7de0") +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
-  labs(title = "DRTG: Predicted vs Actual (Test Set)",
-       x = "Actual DRTG", y = "Predicted DRTG") +
-  theme_minimal()
-```
-
-## Step 7: Project 2028
-
-```{r projections}
-proj_2025 <- master %>%
-  filter(season == 2025, Minutes >= 300) %>%
-  group_by(player_name) %>%
-  slice_max(order_by = Minutes, n = 1) %>%
-  ungroup() %>%
-  rename(
-    lag1_ortg = OnOffRtg,
-    lag1_drtg = OnDefRtg,
-    lag1_ppg  = ppg,
-    lag1_rpg  = rpg,
-    lag1_apg  = apg,
-    lag1_ts   = TsPct,
-    lag1_usg  = Usage,
-    lag1_efg  = EfgPct,
-    lag1_tpg  = tpg,
-    lag1_spg  = spg,
-    lag1_bpg  = bpg
-  ) %>%
-  mutate(age = age + 3)
-
-proj_2025$proj_ortg_2028 <- predict(ortg_model, newdata = proj_2025)
-proj_2025$proj_drtg_2028 <- predict(drtg_model, newdata = proj_2025)
-
-final <- proj_2025 %>%
-  mutate(proj_netrtg_2028 = proj_ortg_2028 - proj_drtg_2028) %>%
-  select(player_name, team, age,
-         proj_ortg_2028, proj_drtg_2028, proj_netrtg_2028) %>%
-  arrange(desc(proj_netrtg_2028)) %>%
-  mutate(Rank = row_number())
-
-print(final, n = Inf)
-```
-
-## Step 8: Final Rankings Table
-
-```{r table}
-final %>%
-  select(Rank,
-         Player  = player_name,
-         Team    = team,
-         Age     = age,
-         `Proj ORTG` = proj_ortg_2028,
-         `Proj DRTG` = proj_drtg_2028,
-         `Net RTG`   = proj_netrtg_2028) %>%
-  mutate(across(where(is.numeric), ~ round(., 1))) %>%
-  kbl(align = c("c","l","c","c","c","c","c"),
-      caption = "2028 WNBA Player Projections — Ranked by Net Rating") %>%
-  kable_styling(bootstrap_options = c("striped","hover","condensed"),
-                full_width = TRUE,
-                font_size = 10) %>%
-  row_spec(0, bold = TRUE)
-```
-
-## Step 9: Export Files
-
-```{r exports}
-write.csv(train_set,
-          '/Users/shashwatmishra/Downloads/WNBA_train_set_v2.csv',
-          row.names = FALSE)
-
-write.csv(test_set,
-          '/Users/shashwatmishra/Downloads/WNBA_test_set_v2.csv',
-          row.names = FALSE)
-
-write.csv(final %>%
-            select(Rank, player_name, team, age,
-                   proj_ortg_2028, proj_drtg_2028, proj_netrtg_2028),
-          '/Users/shashwatmishra/Downloads/WNBA_2028_Projections_V2.csv',
-          row.names = FALSE)
-
-cat("Exported train set:", nrow(train_set), "rows\n")
-cat("Exported test set:", nrow(test_set), "rows\n")
-cat("Exported projections:", nrow(final), "players\n")
-```
-
-
-
-
-
-```{r}
+```{r trimmed_models}
 ortg_model_v2 <- lm(OnOffRtg ~ lag1_ortg + lag1_ppg + lag1_apg,
                     data = train_set)
 
@@ -248,7 +142,23 @@ summary(ortg_model_v2)
 summary(drtg_model_v2)
 ```
 
-```{r}
+## Step 5c: Final Model With Efficiency Check
+
+```{r final_models}
+ortg_model_v3 <- lm(OnOffRtg ~ lag1_ortg + lag1_ppg + 
+                                lag1_apg + lag1_ts,
+                    data = train_set)
+
+drtg_model_v3 <- lm(OnDefRtg ~ lag1_drtg + lag1_spg + lag1_bpg,
+                    data = train_set)
+
+summary(ortg_model_v3)
+summary(drtg_model_v3)
+```
+
+## Step 6: Age Analysis
+
+```{r age_analysis}
 library(ggplot2)
 
 # ORTG vs age
@@ -286,19 +196,21 @@ master %>%
   print()
 ```
 
+## Step 7: Test Set Evaluation
 
+```{r evaluation_final}
+test_set$pred_ortg <- predict(ortg_model_v3, newdata = test_set)
+test_set$pred_drtg <- predict(drtg_model_v3, newdata = test_set)
 
-```{r}
-# Test set evaluation
-test_set$pred_ortg <- predict(ortg_model_v2, newdata = test_set)
-test_set$pred_drtg <- predict(drtg_model_v2, newdata = test_set)
-
-cat("ORTG Train MSE:", round(mean(ortg_model_v2$residuals^2), 4), "\n")
+cat("ORTG Train MSE:", round(mean(ortg_model_v3$residuals^2), 4), "\n")
 cat("ORTG Test MSE: ", round(mean((test_set$OnOffRtg - test_set$pred_ortg)^2, na.rm=TRUE), 4), "\n")
-cat("DRTG Train MSE:", round(mean(drtg_model_v2$residuals^2), 4), "\n")
+cat("DRTG Train MSE:", round(mean(drtg_model_v3$residuals^2), 4), "\n")
 cat("DRTG Test MSE: ", round(mean((test_set$OnDefRtg - test_set$pred_drtg)^2, na.rm=TRUE), 4), "\n")
+```
 
-# Projections
+## Step 8: Project 2028
+
+```{r projections_final}
 proj_2025 <- master %>%
   filter(season == 2025, Minutes >= 300) %>%
   group_by(player_name) %>%
@@ -309,29 +221,64 @@ proj_2025 <- master %>%
     lag1_drtg = OnDefRtg,
     lag1_ppg  = ppg,
     lag1_apg  = apg,
+    lag1_ts   = TsPct,
     lag1_spg  = spg,
     lag1_bpg  = bpg
   ) %>%
   mutate(age = age + 3)
 
-proj_2025$proj_ortg_2028 <- predict(ortg_model_v2, newdata = proj_2025)
-proj_2025$proj_drtg_2028 <- predict(drtg_model_v2, newdata = proj_2025)
+proj_2025$proj_ortg_2028 <- predict(ortg_model_v3, newdata = proj_2025)
+proj_2025$proj_drtg_2028 <- predict(drtg_model_v3, newdata = proj_2025)
 
-final_v2 <- proj_2025 %>%
+final_v3 <- proj_2025 %>%
   mutate(proj_netrtg_2028 = proj_ortg_2028 - proj_drtg_2028) %>%
   select(player_name, team, age,
          proj_ortg_2028, proj_drtg_2028, proj_netrtg_2028) %>%
   arrange(desc(proj_netrtg_2028)) %>%
   mutate(Rank = row_number())
 
-print(final_v2, n = 30)
+print(final_v3, n = 30)
 ```
 
-```{r}
-write.csv(final %>%
+## Step 9: Final Rankings Table
+
+```{r table_final}
+final_v3 %>%
+  select(Rank,
+         Player  = player_name,
+         Team    = team,
+         Age     = age,
+         `Proj ORTG` = proj_ortg_2028,
+         `Proj DRTG` = proj_drtg_2028,
+         `Net RTG`   = proj_netrtg_2028) %>%
+  mutate(across(where(is.numeric), ~ round(., 1))) %>%
+  kbl(align = c("c","l","c","c","c","c","c"),
+      caption = "2028 WNBA Player Projections — Ranked by Net Rating") %>%
+  kable_styling(bootstrap_options = c("striped","hover","condensed"),
+                full_width = TRUE,
+                font_size = 10) %>%
+  row_spec(0, bold = TRUE)
+```
+
+## Step 10: Export Files
+
+```{r exports_final}
+write.csv(train_set,
+          '/Users/shashwatmishra/Downloads/WNBA_train_set_v2.csv',
+          row.names = FALSE)
+
+write.csv(test_set,
+          '/Users/shashwatmishra/Downloads/WNBA_test_set_v2.csv',
+          row.names = FALSE)
+
+write.csv(final_v3 %>%
             select(Rank, player_name, team, age,
                    proj_ortg_2028, proj_drtg_2028, proj_netrtg_2028),
-          '/Users/shashwatmishra/Downloads/WNBA_2028_Projections_V2.csv',
+          '/Users/shashwatmishra/Downloads/WNBA_2028_Projections_Final_V3.csv',
           row.names = FALSE)
+
+cat("Exported train set:", nrow(train_set), "rows\n")
+cat("Exported test set:", nrow(test_set), "rows\n")
+cat("Exported projections:", nrow(final_v3), "players\n")
 ```
 
