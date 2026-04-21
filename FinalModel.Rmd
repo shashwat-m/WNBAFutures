@@ -1,7 +1,19 @@
 ---
-title: "WNBA 2028 Player Projection Model"
+title: "Sports Analytics Project"
+author: "Shashwat Mishra - sdm4329"
+date: "2026-04-17"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+---
+title: "WNBA 2028 Player Projection Model V2"
 author: "Your Team Names"
-date: "2026"
+date: "April 2026"
 output: pdf_document
 ---
 
@@ -12,229 +24,82 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ## Libraries
 
 ```{r libraries}
-library(wehoop)
 library(dplyr)
 library(tidyr)
-library(purrr)
-library(stringr)
 library(ggplot2)
 library(broom)
-library(httr)
+library(knitr)
+library(kableExtra)
 ```
 
-## Step 1: Build Team Four Factors (2020–2025)
+## Step 1: Load and Clean Merged Dataset
 
-```{r team_four_factors}
-seasons <- 2020:2025
-
-pbp_raw <- load_wnba_pbp(seasons = seasons)
-pbp <- pbp_raw %>% filter(season_type == 2)
-
-pbp_tagged <- pbp %>%
+```{r load_data}
+master <- read.csv('/Users/shashwatmishra/Downloads/all_years_merged.csv') %>%
+  rename(season      = Season,
+         player_name = Name,
+         team        = TeamAbbreviation) %>%
   mutate(
-    is_three_attempt = shooting_play == TRUE &
-      (score_value == 3 |
-         str_detect(type_text, regex("3-point|ThreePoint|3Point|three point", 
-                                     ignore_case = TRUE))),
-    is_ft_attempt = str_detect(type_text, regex("free throw", ignore_case = TRUE)),
-    is_ft_made    = is_ft_attempt & scoring_play == TRUE,
-    is_fg_attempt = shooting_play == TRUE & !is_ft_attempt,
-    is_fg_made    = is_fg_attempt & scoring_play == TRUE,
-    is_tov  = str_detect(type_text, regex("turnover", ignore_case = TRUE)) &
-              !str_detect(type_text, regex("offensive foul", ignore_case = TRUE)),
-    is_oreb = str_detect(type_text, regex("offensive rebound", ignore_case = TRUE)),
-    is_dreb = str_detect(type_text, regex("defensive rebound", ignore_case = TRUE))
+    ppg    = Points    / GamesPlayed,
+    rpg    = Rebounds  / GamesPlayed,
+    apg    = Assists   / GamesPlayed,
+    bpg    = Blocks    / GamesPlayed,
+    spg    = Steals    / GamesPlayed,
+    tpg    = Turnovers / GamesPlayed,
+    min_pg = Minutes   / GamesPlayed
   ) %>%
-  mutate(
-    team_abbrev = case_when(
-      team_id == home_team_id ~ home_team_abbrev,
-      team_id == away_team_id ~ away_team_abbrev,
-      TRUE ~ NA_character_
-    ),
-    opp_abbrev = case_when(
-      team_id == home_team_id ~ away_team_abbrev,
-      team_id == away_team_id ~ home_team_abbrev,
-      TRUE ~ NA_character_
-    )
-  ) %>%
-  filter(!is.na(team_abbrev))
+  filter(Minutes >= 100)
 
-team_season_raw <- pbp_tagged %>%
-  group_by(season, game_id, team_abbrev, opp_abbrev) %>%
-  summarise(
-    fga  = sum(is_fg_attempt, na.rm = TRUE),
-    fgm  = sum(is_fg_made,    na.rm = TRUE),
-    fg3a = sum(is_three_attempt, na.rm = TRUE),
-    fg3m = sum(is_three_attempt & scoring_play == TRUE, na.rm = TRUE),
-    fta  = sum(is_ft_attempt, na.rm = TRUE),
-    ftm  = sum(is_ft_made,    na.rm = TRUE),
-    tov  = sum(is_tov,  na.rm = TRUE),
-    oreb = sum(is_oreb, na.rm = TRUE),
-    dreb = sum(is_dreb, na.rm = TRUE),
-    pts  = sum(score_value, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-opp_dreb <- team_season_raw %>%
-  select(season, game_id, opp_abbrev = team_abbrev, opp_dreb = dreb)
-
-team_season_raw <- team_season_raw %>%
-  left_join(opp_dreb, by = c("season", "game_id", "opp_abbrev"))
-
-opp_off <- team_season_raw %>%
-  select(season, game_id, opp_abbrev = team_abbrev,
-         opp_fga = fga, opp_fgm = fgm, opp_fg3m = fg3m,
-         opp_fta = fta, opp_tov = tov, opp_oreb = oreb)
-
-team_with_def <- team_season_raw %>%
-  left_join(opp_off, by = c("season", "game_id", "opp_abbrev"))
-
-allstar_teams <- c("EAST", "WEST", "WIL", "STE", "DEL", "PAR", 
-                   "ALL", "USA", "WNBASTARS")
-
-team_season_full <- team_with_def %>%
-  group_by(season, team_abbrev) %>%
-  summarise(
-    across(c(fga, fgm, fg3a, fg3m, fta, ftm, tov, oreb, dreb, opp_dreb), 
-           sum, na.rm = TRUE),
-    across(c(opp_fga, opp_fgm, opp_fg3m, opp_fta, opp_tov, opp_oreb), 
-           sum, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  mutate(
-    efg_off = (fgm + 0.5 * fg3m) / fga,
-    tov_off = tov / (fga + 0.44 * fta + tov),
-    orb_pct = oreb / (oreb + opp_dreb),
-    ftr_off = fta / fga,
-    efg_def = (opp_fgm + 0.5 * opp_fg3m) / opp_fga,
-    tov_def = opp_tov / (opp_fga + 0.44 * opp_fta + opp_tov),
-    drb_pct = 1 - (opp_oreb / (opp_oreb + dreb)),
-    ftr_def = opp_fta / opp_fga
-  ) %>%
-  filter(!team_abbrev %in% allstar_teams)
+cat("Total rows:", nrow(master), "\n")
+cat("Seasons:", paste(sort(unique(master$season)), collapse = ", "), "\n")
+cat("Unique players:", n_distinct(master$player_name), "\n")
 ```
 
-## Step 2: Build Player Box Score Dataset (2020–2025)
+## Step 2: Add Age
 
-```{r player_box}
-box_raw <- load_wnba_player_box(seasons = seasons) %>%
-  filter(season_type == 2, !is.na(athlete_id))
-
-player_season <- box_raw %>%
-  group_by(
-    season,
-    player_id   = athlete_id,
-    player_name = athlete_display_name,
-    position    = athlete_position_abbreviation,
-    team_abbrev = team_abbreviation
-  ) %>%
-  summarise(
-    gp        = n(),
-    total_min = sum(minutes,                           na.rm = TRUE),
-    fga       = sum(field_goals_attempted,             na.rm = TRUE),
-    fgm       = sum(field_goals_made,                  na.rm = TRUE),
-    fg3a      = sum(three_point_field_goals_attempted, na.rm = TRUE),
-    fg3m      = sum(three_point_field_goals_made,      na.rm = TRUE),
-    fta       = sum(free_throws_attempted,             na.rm = TRUE),
-    ftm       = sum(free_throws_made,                  na.rm = TRUE),
-    oreb      = sum(offensive_rebounds,                na.rm = TRUE),
-    dreb      = sum(defensive_rebounds,                na.rm = TRUE),
-    tov       = sum(turnovers,                         na.rm = TRUE),
-    pts       = sum(points,                            na.rm = TRUE),
-    .groups   = "drop"
-  ) %>%
-  mutate(
-    efg_pct     = (fgm + 0.5 * fg3m) / fga,
-    tov_rate    = tov / (fga + 0.44 * fta + tov),
-    ft_rate     = fta / fga,
-    orb_pct     = oreb / (oreb + dreb),
-    dreb_pct    = dreb / (oreb + dreb),
-    pts_per_min = pts / total_min,
-    # Approximate individual ORTG (Dean Oliver simplified)
-    ind_poss    = fga + 0.44 * fta + tov,
-    approx_ortg = (pts / ind_poss) * 100,
-    # Approximate individual DRTG proxy
-    approx_drtg = ((tov + (fga - fgm)) / ind_poss) * 100
-  ) %>%
-  filter(total_min >= 100)
-```
-
-## Step 3: Add Age and 2025 Official Ratings
-
-```{r age_and_ratings}
+```{r add_age}
 players_2025 <- read.csv('/Users/shashwatmishra/Downloads/WNBA Players 2025 - Sheet1.csv') %>%
-  select(player_name = PLAYER, age_2025 = AGE,
-         offrtg_2025 = OFFRTG, defrtg_2025 = DEFRTG)
+  select(player_name = PLAYER, age_2025 = AGE)
 
-player_season <- player_season %>%
+master <- master %>%
   left_join(players_2025, by = "player_name") %>%
   mutate(age = age_2025 - (2025 - season)) %>%
   filter(!is.na(age))
+
+cat("Rows after age join:", nrow(master), "\n")
+cat("Players retained:", n_distinct(master$player_name), "\n")
 ```
 
-## Step 4: Join Team Context and Position Averages
+## Step 3: Create Lagged Features
 
-```{r team_context}
-player_season <- player_season %>%
-  left_join(
-    team_season_full %>% select(season, team_abbrev,
-                                 team_efg_off = efg_off,
-                                 team_efg_def = efg_def),
-    by = c("season", "team_abbrev")
-  )
-
-pos_avgs <- player_season %>%
-  filter(total_min >= 300) %>%
-  group_by(season, position) %>%
-  summarise(
-    pos_avg_efg     = mean(efg_pct,     na.rm = TRUE),
-    pos_avg_tov     = mean(tov_rate,    na.rm = TRUE),
-    pos_avg_pts_min = mean(pts_per_min, na.rm = TRUE),
-    pos_avg_ortg    = mean(approx_ortg, na.rm = TRUE),
-    pos_avg_drtg    = mean(approx_drtg, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-player_season <- player_season %>%
-  left_join(pos_avgs, by = c("season", "position")) %>%
+```{r lagged_features}
+model_data <- master %>%
+  arrange(player_name, season) %>%
+  group_by(player_name) %>%
   mutate(
-    efg_vs_pos  = efg_pct     - pos_avg_efg,
-    ortg_vs_pos = approx_ortg - pos_avg_ortg,
-    drtg_vs_pos = approx_drtg - pos_avg_drtg
-  )
-```
-
-## Step 5: Build Wide Dataset (One Row Per Player, Multi-Season)
-
-```{r wide_dataset}
-# Create lagged features — prior season stats predict next season ratings
-model_data <- player_season %>%
-  arrange(player_id, season) %>%
-  group_by(player_id) %>%
-  mutate(
-    lag1_ortg       = lag(approx_ortg, 1),
-    lag1_drtg       = lag(approx_drtg, 1),
-    lag1_efg        = lag(efg_pct,     1),
-    lag1_tov        = lag(tov_rate,    1),
-    lag1_ft         = lag(ft_rate,     1),
-    lag1_pts_min    = lag(pts_per_min, 1),
-    lag1_dreb       = lag(dreb_pct,    1),
-    lag1_ortg_v_pos = lag(ortg_vs_pos, 1),
-    lag1_drtg_v_pos = lag(drtg_vs_pos, 1),
-    lag1_team_off   = lag(team_efg_off,1),
-    lag1_team_def   = lag(team_efg_def,1)
+    lag1_ortg = lag(OnOffRtg, 1),
+    lag1_drtg = lag(OnDefRtg, 1),
+    lag1_ppg  = lag(ppg,      1),
+    lag1_rpg  = lag(rpg,      1),
+    lag1_apg  = lag(apg,      1),
+    lag1_ts   = lag(TsPct,    1),
+    lag1_usg  = lag(Usage,    1),
+    lag1_efg  = lag(EfgPct,   1),
+    lag1_tpg  = lag(tpg,      1),
+    lag1_spg  = lag(spg,      1),
+    lag1_bpg  = lag(bpg,      1)
   ) %>%
   ungroup() %>%
   filter(!is.na(lag1_ortg))
 
-cat("Total rows in model dataset:", nrow(model_data), "\n")
+cat("Model dataset rows:", nrow(model_data), "\n")
 cat("Seasons covered:", paste(sort(unique(model_data$season)), collapse = ", "), "\n")
-cat("Unique players:", n_distinct(model_data$player_id), "\n")
+cat("Unique players:", n_distinct(model_data$player_name), "\n")
 ```
 
-## Step 6: Train/Test Split (80/20)
+## Step 4: Train/Test Split (80/20)
 
-```{r train_test_split}
+```{r train_test}
 set.seed(42)
 train_idx <- sample(nrow(model_data), 0.8 * nrow(model_data))
 train_set <- model_data[ train_idx, ]
@@ -244,49 +109,45 @@ cat("Training rows:", nrow(train_set), "\n")
 cat("Test rows:", nrow(test_set), "\n")
 ```
 
-## Step 7: ORTG and DRTG Models
+## Step 5: ORTG and DRTG Models
 
 ```{r models}
-# Offensive model
-ortg_model <- lm(approx_ortg ~ lag1_ortg + lag1_efg + lag1_tov +
-                                lag1_ft + lag1_ortg_v_pos + 
-                                lag1_team_off + age,
+
+library(car)
+ortg_model <- lm(OnOffRtg ~ lag1_ortg + lag1_ppg + lag1_ts +
+                              lag1_usg + lag1_apg + lag1_tpg + age,
                  data = train_set)
 
-# Defensive model
-drtg_model <- lm(approx_drtg ~ lag1_drtg + lag1_dreb + lag1_tov +
-                                lag1_drtg_v_pos + lag1_team_def + age,
+drtg_model <- lm(OnDefRtg ~ lag1_drtg + lag1_rpg + lag1_spg +
+                              lag1_bpg + lag1_tpg + age,
                  data = train_set)
 
 summary(ortg_model)
 summary(drtg_model)
+
+vif(ortg_model)
+vif(drtg_model)
 ```
 
-## Step 8: Evaluate on Test Set
+## Step 6: Evaluate on Test Set
 
 ```{r evaluation}
 test_set$pred_ortg <- predict(ortg_model, newdata = test_set)
 test_set$pred_drtg <- predict(drtg_model, newdata = test_set)
 
-ortg_train_mse <- mean(ortg_model$residuals^2)
-drtg_train_mse <- mean(drtg_model$residuals^2)
-ortg_test_mse  <- mean((test_set$approx_ortg - test_set$pred_ortg)^2, na.rm = TRUE)
-drtg_test_mse  <- mean((test_set$approx_drtg - test_set$pred_drtg)^2, na.rm = TRUE)
+cat("ORTG Train MSE:", round(mean(ortg_model$residuals^2),                           4), "\n")
+cat("ORTG Test MSE: ", round(mean((test_set$OnOffRtg - test_set$pred_ortg)^2, na.rm=TRUE), 4), "\n")
+cat("DRTG Train MSE:", round(mean(drtg_model$residuals^2),                           4), "\n")
+cat("DRTG Test MSE: ", round(mean((test_set$OnDefRtg - test_set$pred_drtg)^2, na.rm=TRUE), 4), "\n")
 
-cat("ORTG Train MSE:", round(ortg_train_mse, 4), "\n")
-cat("ORTG Test MSE: ", round(ortg_test_mse,  4), "\n")
-cat("DRTG Train MSE:", round(drtg_train_mse, 4), "\n")
-cat("DRTG Test MSE: ", round(drtg_test_mse,  4), "\n")
-
-# Visualize predicted vs actual
-ggplot(test_set, aes(x = approx_ortg, y = pred_ortg)) +
+ggplot(test_set, aes(x = OnOffRtg, y = pred_ortg)) +
   geom_point(alpha = 0.5, color = "#e05c3a") +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
   labs(title = "ORTG: Predicted vs Actual (Test Set)",
        x = "Actual ORTG", y = "Predicted ORTG") +
   theme_minimal()
 
-ggplot(test_set, aes(x = approx_drtg, y = pred_drtg)) +
+ggplot(test_set, aes(x = OnDefRtg, y = pred_drtg)) +
   geom_point(alpha = 0.5, color = "#3a7de0") +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
   labs(title = "DRTG: Predicted vs Actual (Test Set)",
@@ -294,91 +155,183 @@ ggplot(test_set, aes(x = approx_drtg, y = pred_drtg)) +
   theme_minimal()
 ```
 
-## Step 9: Project 2028 ORTG and DRTG
+## Step 7: Project 2028
 
 ```{r projections}
-proj_input <- player_season %>%
-  filter(season == 2025, total_min >= 300) %>%
+proj_2025 <- master %>%
+  filter(season == 2025, Minutes >= 300) %>%
+  group_by(player_name) %>%
+  slice_max(order_by = Minutes, n = 1) %>%
+  ungroup() %>%
   rename(
-    lag1_ortg       = approx_ortg,
-    lag1_drtg       = approx_drtg,
-    lag1_efg        = efg_pct,
-    lag1_tov        = tov_rate,
-    lag1_ft         = ft_rate,
-    lag1_pts_min    = pts_per_min,
-    lag1_dreb       = dreb_pct,
-    lag1_ortg_v_pos = ortg_vs_pos,
-    lag1_drtg_v_pos = drtg_vs_pos,
-    lag1_team_off   = team_efg_off,
-    lag1_team_def   = team_efg_def
+    lag1_ortg = OnOffRtg,
+    lag1_drtg = OnDefRtg,
+    lag1_ppg  = ppg,
+    lag1_rpg  = rpg,
+    lag1_apg  = apg,
+    lag1_ts   = TsPct,
+    lag1_usg  = Usage,
+    lag1_efg  = EfgPct,
+    lag1_tpg  = tpg,
+    lag1_spg  = spg,
+    lag1_bpg  = bpg
   ) %>%
-  mutate(age = age + 3)  # project to 2028
+  mutate(age = age + 3)
 
-proj_input$proj_ortg_2028 <- predict(ortg_model, newdata = proj_input)
-proj_input$proj_drtg_2028 <- predict(drtg_model, newdata = proj_input)
+proj_2025$proj_ortg_2028 <- predict(ortg_model, newdata = proj_2025)
+proj_2025$proj_drtg_2028 <- predict(drtg_model, newdata = proj_2025)
 
-final_projections <- proj_input %>%
-  select(player_name, team_abbrev, position, age,
-         proj_ortg_2028, proj_drtg_2028) %>%
+final <- proj_2025 %>%
   mutate(proj_netrtg_2028 = proj_ortg_2028 - proj_drtg_2028) %>%
-  arrange(desc(proj_netrtg_2028))
+  select(player_name, team, age,
+         proj_ortg_2028, proj_drtg_2028, proj_netrtg_2028) %>%
+  arrange(desc(proj_netrtg_2028)) %>%
+  mutate(Rank = row_number())
 
+print(final, n = Inf)
+```
+
+## Step 8: Final Rankings Table
+
+```{r table}
+final %>%
+  select(Rank,
+         Player  = player_name,
+         Team    = team,
+         Age     = age,
+         `Proj ORTG` = proj_ortg_2028,
+         `Proj DRTG` = proj_drtg_2028,
+         `Net RTG`   = proj_netrtg_2028) %>%
+  mutate(across(where(is.numeric), ~ round(., 1))) %>%
+  kbl(align = c("c","l","c","c","c","c","c"),
+      caption = "2028 WNBA Player Projections — Ranked by Net Rating") %>%
+  kable_styling(bootstrap_options = c("striped","hover","condensed"),
+                full_width = TRUE,
+                font_size = 10) %>%
+  row_spec(0, bold = TRUE)
+```
+
+## Step 9: Export Files
+
+```{r exports}
+write.csv(train_set,
+          '/Users/shashwatmishra/Downloads/WNBA_train_set_v2.csv',
+          row.names = FALSE)
+
+write.csv(test_set,
+          '/Users/shashwatmishra/Downloads/WNBA_test_set_v2.csv',
+          row.names = FALSE)
+
+write.csv(final %>%
+            select(Rank, player_name, team, age,
+                   proj_ortg_2028, proj_drtg_2028, proj_netrtg_2028),
+          '/Users/shashwatmishra/Downloads/WNBA_2028_Projections_V2.csv',
+          row.names = FALSE)
+
+cat("Exported train set:", nrow(train_set), "rows\n")
+cat("Exported test set:", nrow(test_set), "rows\n")
+cat("Exported projections:", nrow(final), "players\n")
 ```
 
 
-## Step 10: Clean and Rescale Final Projections
 
-```{r rescale_projections}
-# Fix duplicate players
-final_projections <- final_projections %>%
-  group_by(player_name) %>%
-  slice_max(order_by = proj_netrtg_2028, n = 1) %>%
-  ungroup() %>%
-  select(player_name, team_abbrev, position, age,
-         proj_ortg_2028, proj_drtg_2028, proj_netrtg_2028)
 
-# Rescale ORTG to real rating scale using 2025 actuals as reference
-actual_2025 <- players_2025 %>%
-  select(player_name, offrtg_2025, defrtg_2025)
 
-scale_check <- final_projections %>%
-  left_join(actual_2025, by = "player_name") %>%
-  filter(!is.na(offrtg_2025))
+```{r}
+ortg_model_v2 <- lm(OnOffRtg ~ lag1_ortg + lag1_ppg + lag1_apg,
+                    data = train_set)
 
-ortg_scale <- mean(scale_check$offrtg_2025 / scale_check$proj_ortg_2028, na.rm = TRUE)
+drtg_model_v2 <- lm(OnDefRtg ~ lag1_drtg + lag1_spg + lag1_bpg,
+                    data = train_set)
 
-# Apply final projections:
-# - ORTG: model output rescaled to real rating scale
-# - DRTG: actual 2025 DEFRTG + aging penalty
-#   (box score proxy was unreliable; individual defense requires tracking data)
-final_projections <- final_projections %>%
-  left_join(actual_2025, by = "player_name") %>%
-  mutate(
-    proj_ortg_2028   = proj_ortg_2028 * ortg_scale,
-    proj_drtg_2028   = defrtg_2025 + (age - 3 - 28) * 0.15,
-    proj_netrtg_2028 = proj_ortg_2028 - proj_drtg_2028
+summary(ortg_model_v2)
+summary(drtg_model_v2)
+```
+
+```{r}
+library(ggplot2)
+
+# ORTG vs age
+ggplot(master, aes(x = age, y = OnOffRtg)) +
+  geom_point(alpha = 0.3, color = "#e05c3a") +
+  geom_smooth(method = "lm", color = "#e05c3a", se = TRUE) +
+  geom_smooth(method = "loess", color = "black", linetype = "dashed", se = FALSE) +
+  labs(title = "Offensive Rating vs Age",
+       subtitle = "Linear fit (red) vs LOESS curve (dashed)",
+       x = "Age", y = "OnOffRtg") +
+  theme_minimal()
+
+# DRTG vs age
+ggplot(master, aes(x = age, y = OnDefRtg)) +
+  geom_point(alpha = 0.3, color = "#3a7de0") +
+  geom_smooth(method = "lm", color = "#3a7de0", se = TRUE) +
+  geom_smooth(method = "loess", color = "black", linetype = "dashed", se = FALSE) +
+  labs(title = "Defensive Rating vs Age",
+       subtitle = "Linear fit (blue) vs LOESS curve (dashed)",
+       x = "Age", y = "OnDefRtg") +
+  theme_minimal()
+
+# Also check average rating by age bucket
+master %>%
+  mutate(age_bucket = cut(age, breaks = c(20, 24, 27, 30, 33, 36, 45),
+                          labels = c("21-24", "25-27", "28-30", 
+                                     "31-33", "34-36", "37+"))) %>%
+  group_by(age_bucket) %>%
+  summarise(
+    n            = n(),
+    avg_ortg     = round(mean(OnOffRtg, na.rm = TRUE), 1),
+    avg_drtg     = round(mean(OnDefRtg, na.rm = TRUE), 1),
+    avg_netrtg   = round(mean(OnOffRtg - OnDefRtg, na.rm = TRUE), 1)
   ) %>%
-  arrange(desc(proj_netrtg_2028))
-
-print(final_projections %>%
-  select(player_name, position, age,
-         proj_ortg_2028, proj_drtg_2028,
-         proj_netrtg_2028), n = Inf)
-
-# Export for draft
-write.csv(
-  final_projections %>%
-    select(player_name, position, age,
-           proj_ortg_2028, proj_drtg_2028,
-           proj_netrtg_2028),
-  '/Users/shashwatmishra/Downloads/WNBA_2028_Projections.csv',
-  row.names = FALSE
-)
+  print()
 ```
 
 
 
 ```{r}
-write.csv(train_set, '/Users/shashwatmishra/Downloads/WNBA_train_set.csv', row.names = FALSE)
-write.csv(test_set,  '/Users/shashwatmishra/Downloads/WNBA_test_set.csv',  row.names = FALSE)
+# Test set evaluation
+test_set$pred_ortg <- predict(ortg_model_v2, newdata = test_set)
+test_set$pred_drtg <- predict(drtg_model_v2, newdata = test_set)
+
+cat("ORTG Train MSE:", round(mean(ortg_model_v2$residuals^2), 4), "\n")
+cat("ORTG Test MSE: ", round(mean((test_set$OnOffRtg - test_set$pred_ortg)^2, na.rm=TRUE), 4), "\n")
+cat("DRTG Train MSE:", round(mean(drtg_model_v2$residuals^2), 4), "\n")
+cat("DRTG Test MSE: ", round(mean((test_set$OnDefRtg - test_set$pred_drtg)^2, na.rm=TRUE), 4), "\n")
+
+# Projections
+proj_2025 <- master %>%
+  filter(season == 2025, Minutes >= 300) %>%
+  group_by(player_name) %>%
+  slice_max(order_by = Minutes, n = 1) %>%
+  ungroup() %>%
+  rename(
+    lag1_ortg = OnOffRtg,
+    lag1_drtg = OnDefRtg,
+    lag1_ppg  = ppg,
+    lag1_apg  = apg,
+    lag1_spg  = spg,
+    lag1_bpg  = bpg
+  ) %>%
+  mutate(age = age + 3)
+
+proj_2025$proj_ortg_2028 <- predict(ortg_model_v2, newdata = proj_2025)
+proj_2025$proj_drtg_2028 <- predict(drtg_model_v2, newdata = proj_2025)
+
+final_v2 <- proj_2025 %>%
+  mutate(proj_netrtg_2028 = proj_ortg_2028 - proj_drtg_2028) %>%
+  select(player_name, team, age,
+         proj_ortg_2028, proj_drtg_2028, proj_netrtg_2028) %>%
+  arrange(desc(proj_netrtg_2028)) %>%
+  mutate(Rank = row_number())
+
+print(final_v2, n = 30)
 ```
+
+```{r}
+write.csv(final %>%
+            select(Rank, player_name, team, age,
+                   proj_ortg_2028, proj_drtg_2028, proj_netrtg_2028),
+          '/Users/shashwatmishra/Downloads/WNBA_2028_Projections_V2.csv',
+          row.names = FALSE)
+```
+
