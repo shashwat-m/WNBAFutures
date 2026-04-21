@@ -1,16 +1,4 @@
 ---
-title: "Sports Analytics Project"
-author: "Shashwat Mishra - sdm4329"
-date: "2026-04-17"
-output: pdf_document
----
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
-
----
 title: "WNBA 2028 Player Projection Model V2"
 author: "Your Team Names"
 date: "April 2026"
@@ -31,6 +19,8 @@ library(broom)
 library(knitr)
 library(kableExtra)
 ```
+
+
 
 ## Step 1: Load and Clean Merged Dataset
 
@@ -196,7 +186,8 @@ master %>%
   print()
 ```
 
-## Step 7: Test Set Evaluation
+
+## Step 7a: Test Set Evaluation
 
 ```{r evaluation_final}
 test_set$pred_ortg <- predict(ortg_model_v3, newdata = test_set)
@@ -240,7 +231,25 @@ final_v3 <- proj_2025 %>%
 print(final_v3, n = 30)
 ```
 
-## Step 9: Final Rankings Table
+## Step 7b: Predicted vs. Actual Plots
+
+```{r}
+ggplot(test_set, aes(x = OnOffRtg, y = pred_ortg)) +
+  geom_point(alpha = 0.5, color = "#e05c3a") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(title = "ORTG: Predicted vs Actual (Test Set)",
+       x = "Actual ORTG", y = "Predicted ORTG") +
+  theme_minimal()
+
+ggplot(test_set, aes(x = OnDefRtg, y = pred_drtg)) +
+  geom_point(alpha = 0.5, color = "#3a7de0") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(title = "DRTG: Predicted vs Actual (Test Set)",
+       x = "Actual DRTG", y = "Predicted DRTG") +
+  theme_minimal()
+```
+
+## Step 9a: Final Rankings Table
 
 ```{r table_final}
 final_v3 %>%
@@ -259,6 +268,25 @@ final_v3 %>%
                 font_size = 10) %>%
   row_spec(0, bold = TRUE)
 ```
+
+## Step 9b: Bar Chart
+
+```{r}
+final_v3 %>%
+  slice_head(n = 20) %>%
+  ggplot(aes(x = reorder(player_name, proj_netrtg_2028), 
+             y = proj_netrtg_2028,
+             fill = proj_netrtg_2028)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_gradient(low = "#f0a87a", high = "#e05c3a") +
+  labs(title = "Top 20 Projected Players for 2028",
+       subtitle = "Ranked by Projected Net Rating",
+       x = NULL, y = "Projected Net RTG") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
 
 ## Step 10: Export Files
 
